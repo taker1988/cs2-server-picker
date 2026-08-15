@@ -1,0 +1,20 @@
+services:
+  cs2-server-picker:
+    image: dein_dockerhub_name/cs2-server-picker:latest # HIER ANPASSEN: Docker Hub Nutzername eintragen
+    container_name: cs2-server-picker
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=Europe/Berlin
+      - ALLOW_REGIONS=fra # HIER ANPASSEN: Whitelist (z.B. fra). Wenn gesetzt, wird alles andere blockiert.
+      - BLOCK_REGIONS=ams,atl,dfw,dxb,eze,gru,gum,hkg,iad,jnb,lax,lhr,lim,mad,ord,par,scl,sea,seo,sgp,sto,syd,tyo,vie,waw,bom2,maa2,sto2,ctum,pekm,pvgm,tgdm,ctut,pekt,pvgt,tgdt,ctuu,peku,pvgu,tgdu # HIER ANPASSEN: Blacklist. Greift nur, wenn ALLOW_REGIONS leer ist.
+    volumes:
+      - /volume2/docker_nvme/cs2-server-picker/:/app/html # HIER ANPASSEN: Lokaler Pfad fuer die generierten Textdateien
+    ports:
+      - "8115:8000" # HIER ANPASSEN: Gewuenschter externer Port
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/blocklist.txt"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
