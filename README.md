@@ -14,89 +14,21 @@ Automated setup to enforce Counter-Strike 2 (CS2) matchmaking on specific server
 
 ### Architecture
 
-1. **Docker Container (Backend):** Queries the official Valve API (`GetSDRConfig`) hourly for Steam Datagram Relay (SDR) servers. Filters them based on a Whitelist (`ALLOW_REGIONS`) or Blacklist (`BLOCK_REGIONS`) and serves a `blocklist.txt` via a lightweight HTTP server.
+1. **Docker Container (Backend):** Queries the official Valve API (`GetSDRConfig`) hourly for Steam Datagram Relay (SDR) servers. Filters them based on a Whitelist (`ALLOW_REGIONS`) or Blacklist (`BLOCK_REGIONS`) and serves a `blocklist.txt` via a lightweight HTTP server. The backend runs as a pre-built Docker image.
 2. **Windows/Linux Client:** Runs on a schedule (every 6 hours), downloads the list, and updates the local firewall (`netsh` for Windows, `iptables` for Linux) to block the IPs. Keeps a rotating log of the last 5 executions.
 
 ---
 
 ### Part 1: Docker Backend Setup
 
-The container runs isolated and generates `blocklist.txt` and `summary.json`.
+The container runs isolated and generates `blocklist.txt` and `summary.json`. Since the image is hosted on Docker Hub, you only need to deploy the `docker-compose.yml` stack.
 
-#### 1. Python Script
-Create a directory on your host (e.g., `/volume2/docker_nvme/cs2-server-picker/app/`) and place this `generate.py` file inside:
-
-```python
-import json
-import urllib.request
-import time
-import os
-
-# Internal container paths
-SDR_URL = "[https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730](https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730)"
-OUTPUT_FILE = "/app/html/blocklist.txt"
-SUMMARY_FILE = "/app/html/summary.json"
-
-def update_list():
-    allow_env = os.environ.get("ALLOW_REGIONS", "").strip()
-    block_env = os.environ.get("BLOCK_REGIONS", "").strip()
-    
-    allowed_pops = [p.strip() for p in allow_env.split(",") if p.strip()]
-    blocked_pops = [p.strip() for p in block_env.split(",") if p.strip()]
-
-    try:
-        req = urllib.request.Request(SDR_URL, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
-            data = json.loads(response.read().decode('utf-8'))
-        
-        ips_to_block = []
-        summary = {"allowed": [], "blocked": {}}
-        
-        for pop_code, details in data.get("pops", {}).items():
-            block_this_pop = False
-            
-            if allowed_pops:
-                if pop_code not in allowed_pops:
-                    block_this_pop = True
-            elif blocked_pops:
-                if pop_code in blocked_pops:
-                    block_this_pop = True
-            
-            desc = details.get("desc", pop_code)
-            if block_this_pop:
-                relays = details.get("relays", [])
-                ipv4_list = [r["ipv4"] for r in relays if "ipv4" in r]
-                ips_to_block.extend(ipv4_list)
-                if ipv4_list:
-                    summary["blocked"][desc] = len(ipv4_list)
-            else:
-                summary["allowed"].append(desc)
-        
-        os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-        
-        with open(OUTPUT_FILE, "w") as f:
-            f.write("\n".join(ips_to_block))
-            
-        with open(SUMMARY_FILE, "w") as f:
-            json.dump(summary, f)
-            
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] List updated. {len(ips_to_block)} IPs blocked.", flush=True)
-    except Exception as e:
-        print(f"Update error: {e}", flush=True)
-
-if __name__ == "__main__":
-    while True:
-        update_list()
-        time.sleep(3600)
-```
-
-#### 2. Docker Compose
-Deploy the stack. Adjust paths, variables, and ports.
+Deploy the following stack (e.g., via Portainer). Adjust paths, variables, and ports to fit your host environment.
 
 ```yaml
 services:
   cs2-server-picker:
-    image: python:3.11-alpine
+    image: taker1988/cs2-server-picker:latest
     container_name: cs2-server-picker
     restart: always
     security_opt:
@@ -106,10 +38,9 @@ services:
       - ALLOW_REGIONS=fra # ADJUST HERE: Whitelist (e.g., fra). Blocks everything else if set.
       - BLOCK_REGIONS=ams,atl,dfw,dxb,eze,gru,gum,hkg,iad,jnb,lax,lhr,lim,mad,ord,par,scl,sea,seo,sgp,sto,syd,tyo,vie,waw,bom2,maa2,sto2,ctum,pekm,pvgm,tgdm,ctut,pekt,pvgt,tgdt,ctuu,peku,pvgu,tgdu # ADJUST HERE: Blacklist. Only active if ALLOW_REGIONS is empty.
     volumes:
-      - /volume2/docker_nvme/cs2-server-picker/app:/app # ADJUST HERE: Local host path
+      - /volume2/docker/cs2-server-picker/html:/app/html # ADJUST HERE: Local host path for the generated text files
     ports:
       - "8115:8000" # ADJUST HERE: External port
-    command: sh -c "python /app/generate.py & sleep 5 && python -m http.server 8000 --directory /app/html"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8000/blocklist.txt"]
       interval: 1m
@@ -375,90 +306,21 @@ In den Skripten und Beispielen wird die IP `192.168.178.123` und der Port `8115`
 
 ### Funktionsweise der Komponenten
 
-1. **Docker Container (Backend):** Fragt stündlich die offizielle Valve-API (`GetSDRConfig`) ab, welche alle Steam-Datagram-Relay (SDR) Server auflistet. Filtert die Daten basierend auf einer Whitelist (`ALLOW_REGIONS`) oder Blacklist (`BLOCK_REGIONS`) und stellt eine `blocklist.txt` über einen integrierten HTTP-Server bereit.
+1. **Docker Container (Backend):** Fragt stündlich die offizielle Valve-API (`GetSDRConfig`) ab, welche alle Steam-Datagram-Relay (SDR) Server auflistet. Filtert die Daten basierend auf einer Whitelist (`ALLOW_REGIONS`) oder Blacklist (`BLOCK_REGIONS`) und stellt eine `blocklist.txt` über einen integrierten HTTP-Server bereit. Das Backend wird als fertiges Docker-Image bereitgestellt.
 2. **Windows/Linux-Skript (Client):** Wird per Aufgabenplanung bzw. `systemd` alle 6 Stunden ausgeführt. Lädt die Liste herunter und aktualisiert die lokale Firewall (`netsh` für Windows, `iptables` für Linux), um die IPs zu blockieren. Es werden rotierende Logs der letzten 5 Durchläufe gespeichert.
 
 ---
 
 ### Teil 1: Das Docker-Backend
 
-Der Container benötigt keine speziellen Berechtigungen, läuft isoliert und generiert die Dateien `blocklist.txt` und `summary.json`.
+Der Container benötigt keine speziellen Berechtigungen, läuft isoliert und generiert die Dateien `blocklist.txt` und `summary.json`. Da das Image auf Docker Hub gehostet wird, musst du lediglich den `docker-compose.yml` Stack ausführen.
 
-#### 1. Python-Skript erstellen
-Erstelle auf deinem Server den Pfad für das Volume (z.B. `/volume2/docker_nvme/cs2-server-picker/app/`).
-Lege dort die Datei `generate.py` mit folgendem Inhalt an:
-
-```python
-import json
-import urllib.request
-import time
-import os
-
-# Interne Container-Pfade (muessen normalerweise nicht geaendert werden)
-SDR_URL = "[https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730](https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730)"
-OUTPUT_FILE = "/app/html/blocklist.txt"
-SUMMARY_FILE = "/app/html/summary.json"
-
-def update_list():
-    allow_env = os.environ.get("ALLOW_REGIONS", "").strip()
-    block_env = os.environ.get("BLOCK_REGIONS", "").strip()
-    
-    allowed_pops = [p.strip() for p in allow_env.split(",") if p.strip()]
-    blocked_pops = [p.strip() for p in block_env.split(",") if p.strip()]
-
-    try:
-        req = urllib.request.Request(SDR_URL, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
-            data = json.loads(response.read().decode('utf-8'))
-        
-        ips_to_block = []
-        summary = {"allowed": [], "blocked": {}}
-        
-        for pop_code, details in data.get("pops", {}).items():
-            block_this_pop = False
-            
-            if allowed_pops:
-                if pop_code not in allowed_pops:
-                    block_this_pop = True
-            elif blocked_pops:
-                if pop_code in blocked_pops:
-                    block_this_pop = True
-            
-            desc = details.get("desc", pop_code)
-            if block_this_pop:
-                relays = details.get("relays", [])
-                ipv4_list = [r["ipv4"] for r in relays if "ipv4" in r]
-                ips_to_block.extend(ipv4_list)
-                if ipv4_list:
-                    summary["blocked"][desc] = len(ipv4_list)
-            else:
-                summary["allowed"].append(desc)
-        
-        os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-        
-        with open(OUTPUT_FILE, "w") as f:
-            f.write("\n".join(ips_to_block))
-            
-        with open(SUMMARY_FILE, "w") as f:
-            json.dump(summary, f)
-            
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Liste aktualisiert. {len(ips_to_block)} IPs blockiert.", flush=True)
-    except Exception as e:
-        print(f"Fehler beim Update: {e}", flush=True)
-
-if __name__ == "__main__":
-    while True:
-        update_list()
-        time.sleep(3600)
-```
-
-#### 2. Docker Compose Stack
-Erstelle den folgenden Stack (z.B. in Portainer). Passe Pfade und Ports entsprechend an.
+Erstelle den folgenden Stack (z.B. in Portainer). Passe Pfade und Ports entsprechend an deine Umgebung an.
 
 ```yaml
 services:
   cs2-server-picker:
-    image: python:3.11-alpine
+    image: taker1988/cs2-server-picker:latest
     container_name: cs2-server-picker
     restart: always
     security_opt:
@@ -468,10 +330,9 @@ services:
       - ALLOW_REGIONS=fra # HIER ANPASSEN: Whitelist (z.B. fra). Wenn gesetzt, wird alles andere blockiert.
       - BLOCK_REGIONS=ams,atl,dfw,dxb,eze,gru,gum,hkg,iad,jnb,lax,lhr,lim,mad,ord,par,scl,sea,seo,sgp,sto,syd,tyo,vie,waw,bom2,maa2,sto2,ctum,pekm,pvgm,tgdm,ctut,pekt,pvgt,tgdt,ctuu,peku,pvgu,tgdu # HIER ANPASSEN: Blacklist. Greift nur, wenn ALLOW_REGIONS leer ist.
     volumes:
-      - /volume2/docker_nvme/cs2-server-picker/app:/app # HIER ANPASSEN: Lokaler Pfad auf dem Host/NAS
+      - /volume2/docker/cs2-server-picker/html:/app/html # HIER ANPASSEN: Lokaler Pfad fuer die generierten Textdateien
     ports:
       - "8115:8000" # HIER ANPASSEN: Gewuenschter externer Port.
-    command: sh -c "python /app/generate.py & sleep 5 && python -m http.server 8000 --directory /app/html"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8000/blocklist.txt"]
       interval: 1m
