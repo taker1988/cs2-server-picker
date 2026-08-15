@@ -1,32 +1,39 @@
-CS2 Server Picker (Docker Backend + Windows/Linux Client)
+# CS2 Server Picker (Docker Backend + Windows/Linux Client)
 
-English Version | Deutsche Version
-English Version
+[English Version](#english-version) | [Deutsche Version](#deutsche-version)
+
+---
+
+## English Version
 
 Automated setup to enforce Counter-Strike 2 (CS2) matchmaking on specific server regions (e.g., Frankfurt only) by blocking unwanted IP ranges via the local firewall. This works for solo queuing as well as full lobbies.
 
-Background: When starting a match search, the game pings all available servers to find the "best" one. If only one player (who runs this script) blocks all other regions, the entire lobby will be routed to the remaining allowed server.
+**Background:** When starting a match search, the game pings all available servers to find the "best" one. If only one player (who runs this script) blocks all other regions, the entire lobby will be routed to the remaining allowed server.
 
-Important Notice: The scripts use 192.168.178.123 and Port 8115 as placeholders. Adjust the IP and Port in all scripts to match your actual Docker host environment.
-Architecture
+**Important Notice:** The scripts use `192.168.178.123` and Port `8115` as placeholders. **Adjust the IP and Port in all scripts** to match your actual Docker host environment.
 
-    Docker Container (Backend): Queries the official Valve API (GetSDRConfig) hourly for Steam Datagram Relay (SDR) servers. Filters them based on a Whitelist (ALLOW_REGIONS) or Blacklist (BLOCK_REGIONS) and serves a blocklist.txt via a lightweight HTTP server.
+### Architecture
 
-    Windows/Linux Client: Runs on a schedule (every 6 hours), downloads the list, and updates the local firewall (netsh for Windows, iptables for Linux) to block the IPs. Keeps a rotating log of the last 5 executions.
+1. **Docker Container (Backend):** Queries the official Valve API (`GetSDRConfig`) hourly for Steam Datagram Relay (SDR) servers. Filters them based on a Whitelist (`ALLOW_REGIONS`) or Blacklist (`BLOCK_REGIONS`) and serves a `blocklist.txt` via a lightweight HTTP server.
+2. **Windows/Linux Client:** Runs on a schedule (every 6 hours), downloads the list, and updates the local firewall (`netsh` for Windows, `iptables` for Linux) to block the IPs. Keeps a rotating log of the last 5 executions.
 
-Part 1: Docker Backend Setup
+---
 
-The container runs isolated and generates blocklist.txt and summary.json.
-1. Python Script
+### Part 1: Docker Backend Setup
 
-Create a directory on your host (e.g., /volume2/docker_nvme/cs2-server-picker/app/) and place this generate.py file inside:
+The container runs isolated and generates `blocklist.txt` and `summary.json`.
+
+#### 1. Python Script
+Create a directory on your host (e.g., `/volume2/docker_nvme/cs2-server-picker/app/`) and place this `generate.py` file inside:
+
+```python
 import json
 import urllib.request
 import time
 import os
 
 # Internal container paths
-SDR_URL = "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730"
+SDR_URL = "[https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730](https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730)"
 OUTPUT_FILE = "/app/html/blocklist.txt"
 SUMMARY_FILE = "/app/html/summary.json"
 
@@ -81,11 +88,12 @@ if __name__ == "__main__":
     while True:
         update_list()
         time.sleep(3600)
-        2. Docker Compose
+```
 
+#### 2. Docker Compose
 Deploy the stack. Adjust paths, variables, and ports.
-YAML
 
+```yaml
 services:
   cs2-server-picker:
     image: python:3.11-alpine
@@ -107,18 +115,19 @@ services:
       interval: 1m
       timeout: 10s
       retries: 3
+```
 
-Part 2: Windows Client Setup
+---
 
-    Save the following code as Update-CS2Firewall.ps1.
+### Part 2: Windows Client Setup
 
-    Adjust $UrlBlocklist, $UrlSummary, and $LogDir.
+1. Save the following code as `Update-CS2Firewall.ps1`.
+2. Adjust `$UrlBlocklist`, `$UrlSummary`, and `$LogDir`.
 
-PowerShell
-
+```powershell
 # ADJUST HERE: IP/Domain and Port of your Docker Host
-$UrlBlocklist = "http://192.168.178.123:8115/blocklist.txt" 
-$UrlSummary = "http://192.168.178.123:8115/summary.json" 
+$UrlBlocklist = "[http://192.168.178.123:8115/blocklist.txt](http://192.168.178.123:8115/blocklist.txt)" 
+$UrlSummary = "[http://192.168.178.123:8115/summary.json](http://192.168.178.123:8115/summary.json)" 
 
 # ADJUST HERE: Directory for log files (must exist)
 $LogDir = "C:\Users\YourUser\Documents" 
@@ -176,30 +185,28 @@ if ($LogFiles.Count -gt 5) {
         Remove-Item -Path $File.FullName -Force
     }
 }
+```
 
-Task Scheduler Automation:
+**Task Scheduler Automation:**
+* Open Task Scheduler -> *Create Task...*
+* **General:** Name it, check **Run with highest privileges**.
+* **Triggers:** New -> Daily -> Repeat task every 6 hours.
+* **Actions:** Start a program -> `powershell.exe`. Arguments: `-ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\YourUser\Documents\Update-CS2Firewall.ps1"` **(Adjust path!)**
 
-    Open Task Scheduler -> Create Task...
+---
 
-    General: Name it, check Run with highest privileges.
+### Part 3: Linux Client Setup
 
-    Triggers: New -> Daily -> Repeat task every 6 hours.
+**Prerequisites:** Install `jq` and `iptables`. (e.g., `sudo pacman -S jq iptables` or `sudo apt install jq iptables`).
 
-    Actions: Start a program -> powershell.exe. Arguments: -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\YourUser\Documents\Update-CS2Firewall.ps1" (Adjust path!)
+1. Save the following script as `/usr/local/bin/update-cs2firewall.sh`. Adjust the `URL` variables and `$LOG_DIR`.
 
-Part 3: Linux Client Setup
-
-Prerequisites: Install jq and iptables. (e.g., sudo pacman -S jq iptables or sudo apt install jq iptables).
-
-    Save the following script as /usr/local/bin/update-cs2firewall.sh. Adjust the URL variables and $LOG_DIR.
-
-Bash
-
+```bash
 #!/bin/bash
 
 # ADJUST HERE: IP/Domain and Port of your Docker Host
-URL_BLOCKLIST="http://192.168.178.123:8115/blocklist.txt" 
-URL_SUMMARY="http://192.168.178.123:8115/summary.json" 
+URL_BLOCKLIST="[http://192.168.178.123:8115/blocklist.txt](http://192.168.178.123:8115/blocklist.txt)" 
+URL_SUMMARY="[http://192.168.178.123:8115/summary.json](http://192.168.178.123:8115/summary.json)" 
 
 # ADJUST HERE: Directory for log files
 LOG_DIR="/var/log/cs2_firewall" 
@@ -266,16 +273,16 @@ write_log "--------------------------------------------------"
 
 # Rotate log files (keep max 5)
 ls -t "$LOG_DIR"/cs2_firewall_log_*.log 2>/dev/null | tail -n +6 | xargs -r rm -f
+```
 
 Make it executable:
-Bash
-
+```bash
 sudo chmod +x /usr/local/bin/update-cs2firewall.sh
+```
 
-Systemd Automation:
-Create the service file /etc/systemd/system/cs2-blocker.service:
-Ini, TOML
-
+**Systemd Automation:**
+Create the service file `/etc/systemd/system/cs2-blocker.service`:
+```ini
 [Unit]
 Description=Update CS2 Firewall Rules
 After=network.target
@@ -284,10 +291,10 @@ After=network.target
 Type=oneshot
 # ADJUST HERE: Path to the executable script
 ExecStart=/usr/local/bin/update-cs2firewall.sh
+```
 
-Create the timer file /etc/systemd/system/cs2-blocker.timer:
-Ini, TOML
-
+Create the timer file `/etc/systemd/system/cs2-blocker.timer`:
+```ini
 [Unit]
 Description=Run CS2 Firewall Update every 6 hours
 
@@ -297,15 +304,18 @@ OnUnitActiveSec=6h
 
 [Install]
 WantedBy=timers.target
+```
 
 Enable and start:
-Bash
-
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now cs2-blocker.timer
+```
 
-Plaintext
+<details>
+<summary><b>Server Region Abbreviations (Click to expand)</b></summary>
 
+```text
 ams = Amsterdam (Netherlands)
 atl = Atlanta (USA)
 bom2 = Mumbai (India)
@@ -347,37 +357,45 @@ tgdu = Guangzhou - Unicom (China)
 tyo = Tokyo (Japan)
 vie = Vienna (Austria)
 waw = Warsaw (Poland)
+```
+</details>
 
-Deutsche Version
+<br>
+
+---
+
+## Deutsche Version
 
 Automatisiertes Setup, um Counter-Strike 2 (CS2) Matchmaking auf bestimmte Serverregionen (z. B. nur Frankfurt) zu erzwingen, indem unerwünschte IP-Bereiche über die lokale Firewall blockiert werden. Funktioniert sowohl bei der Solo-Suche als auch in Lobbys mit mehreren Spielern.
 
-Hintergrund: Beim Start der Suche für ein Match werden die Clients und Server angepingt, um den bestmöglichen Server zu finden. Blockiert der ausführende Spieler alle Regionen außer der gewünschten, wird die gesamte Lobby auf diesen verbleibenden Server gezwungen.
+**Hintergrund:** Beim Start der Suche für ein Match werden die Clients und Server angepingt, um den bestmöglichen Server zu finden. Blockiert der ausführende Spieler alle Regionen außer der gewünschten, wird die gesamte Lobby auf diesen verbleibenden Server gezwungen.
 
-Wichtiger Hinweis vorab (IP und Port):
-In den Skripten und Beispielen wird die IP 192.168.178.123 und der Port 8115 verwendet. Passe diese Werte in allen Skripten an, damit sie deiner Docker-Umgebung entsprechen.
-Funktionsweise der Komponenten
+**Wichtiger Hinweis vorab (IP und Port):** 
+In den Skripten und Beispielen wird die IP `192.168.178.123` und der Port `8115` verwendet. **Passe diese Werte in allen Skripten an**, damit sie deiner Docker-Umgebung entsprechen.
 
-    Docker Container (Backend): Fragt stündlich die offizielle Valve-API (GetSDRConfig) ab, welche alle Steam-Datagram-Relay (SDR) Server auflistet. Filtert die Daten basierend auf einer Whitelist (ALLOW_REGIONS) oder Blacklist (BLOCK_REGIONS) und stellt eine blocklist.txt über einen integrierten HTTP-Server bereit.
+### Funktionsweise der Komponenten
 
-    Windows/Linux-Skript (Client): Wird per Aufgabenplanung bzw. systemd alle 6 Stunden ausgeführt. Lädt die Liste herunter und aktualisiert die lokale Firewall (netsh für Windows, iptables für Linux), um die IPs zu blockieren. Es werden rotierende Logs der letzten 5 Durchläufe gespeichert.
+1. **Docker Container (Backend):** Fragt stündlich die offizielle Valve-API (`GetSDRConfig`) ab, welche alle Steam-Datagram-Relay (SDR) Server auflistet. Filtert die Daten basierend auf einer Whitelist (`ALLOW_REGIONS`) oder Blacklist (`BLOCK_REGIONS`) und stellt eine `blocklist.txt` über einen integrierten HTTP-Server bereit.
+2. **Windows/Linux-Skript (Client):** Wird per Aufgabenplanung bzw. `systemd` alle 6 Stunden ausgeführt. Lädt die Liste herunter und aktualisiert die lokale Firewall (`netsh` für Windows, `iptables` für Linux), um die IPs zu blockieren. Es werden rotierende Logs der letzten 5 Durchläufe gespeichert.
 
-Teil 1: Das Docker-Backend
+---
 
-Der Container benötigt keine speziellen Berechtigungen, läuft isoliert und generiert die Dateien blocklist.txt und summary.json.
-1. Python-Skript erstellen
+### Teil 1: Das Docker-Backend
 
-Erstelle auf deinem Server den Pfad für das Volume (z.B. /volume2/docker_nvme/cs2-server-picker/app/).
-Lege dort die Datei generate.py mit folgendem Inhalt an:
-Python
+Der Container benötigt keine speziellen Berechtigungen, läuft isoliert und generiert die Dateien `blocklist.txt` und `summary.json`.
 
+#### 1. Python-Skript erstellen
+Erstelle auf deinem Server den Pfad für das Volume (z.B. `/volume2/docker_nvme/cs2-server-picker/app/`).
+Lege dort die Datei `generate.py` mit folgendem Inhalt an:
+
+```python
 import json
 import urllib.request
 import time
 import os
 
 # Interne Container-Pfade (muessen normalerweise nicht geaendert werden)
-SDR_URL = "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730"
+SDR_URL = "[https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730](https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730)"
 OUTPUT_FILE = "/app/html/blocklist.txt"
 SUMMARY_FILE = "/app/html/summary.json"
 
@@ -432,12 +450,12 @@ if __name__ == "__main__":
     while True:
         update_list()
         time.sleep(3600)
+```
 
-2. Docker Compose Stack
-
+#### 2. Docker Compose Stack
 Erstelle den folgenden Stack (z.B. in Portainer). Passe Pfade und Ports entsprechend an.
-YAML
 
+```yaml
 services:
   cs2-server-picker:
     image: python:3.11-alpine
@@ -459,18 +477,19 @@ services:
       interval: 1m
       timeout: 10s
       retries: 3
+```
 
-Teil 2: Windows Client Einrichtung
+---
 
-    Speichere diesen Code als Update-CS2Firewall.ps1.
+### Teil 2: Windows Client Einrichtung
 
-    Passe die Variablen $UrlBlocklist, $UrlSummary und $LogDir an deine Umgebung an.
+1. Speichere diesen Code als `Update-CS2Firewall.ps1`.
+2. Passe die Variablen `$UrlBlocklist`, `$UrlSummary` und `$LogDir` an deine Umgebung an.
 
-PowerShell
-
+```powershell
 # HIER ANPASSEN: IP/Domain und Port des Docker-Hosts eintragen.
-$UrlBlocklist = "http://192.168.178.123:8115/blocklist.txt" 
-$UrlSummary = "http://192.168.178.123:8115/summary.json" 
+$UrlBlocklist = "[http://192.168.178.123:8115/blocklist.txt](http://192.168.178.123:8115/blocklist.txt)" 
+$UrlSummary = "[http://192.168.178.123:8115/summary.json](http://192.168.178.123:8115/summary.json)" 
 
 # HIER ANPASSEN: Gewuenschter Pfad fuer die Log-Dateien. Ordner muss existieren.
 $LogDir = "C:\Users\DeinNutzer\Documents" 
@@ -480,15 +499,14 @@ $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $LogFile = "$LogDir\CS2_Firewall_Update_$Timestamp.log"
 
 Function Write-Log {
-    param ([string]$Message)
-    $LogTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -Path $LogFile -Value "[$LogTime] $Message"
+    param ([string]$Message)$LogTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -Path $LogFile -Value "[$LogTime]$Message"
 }
 
 try {
     Write-Log "Starte Aktualisierung der CS2 Firewall-Regeln..."
-    $BlockList = Invoke-RestMethod -Uri $UrlBlocklist
-    $Ips = $BlockList -split "`n" | Where-Object { $_.Trim() -ne "" }
+    $BlockList = Invoke-RestMethod -Uri$UrlBlocklist
+    $Ips =$BlockList -split "`n" | Where-Object { $_.Trim() -ne "" }
     
     try {
         $Summary = Invoke-RestMethod -Uri $UrlSummary
@@ -528,32 +546,30 @@ if ($LogFiles.Count -gt 5) {
         Remove-Item -Path $File.FullName -Force
     }
 }
+```
 
-Automatisierung (Windows-Aufgabenplanung):
+**Automatisierung (Windows-Aufgabenplanung):**
+* Öffne die Aufgabenplanung -> *Aufgabe erstellen...* 
+* **Allgemein:** Name eintragen, Haken bei **"Mit höchsten Privilegien ausführen"** setzen.
+* **Trigger:** Neu -> Täglich -> Wiederholen alle 6 Stunden.
+* **Aktion:** Programm starten -> `powershell.exe`. Argumente: `-ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\DeinNutzer\Documents\Update-CS2Firewall.ps1"` **(Pfad anpassen!)**
 
-    Öffne die Aufgabenplanung -> Aufgabe erstellen...
+---
 
-    Allgemein: Name eintragen, Haken bei "Mit höchsten Privilegien ausführen" setzen.
+### Teil 3: Linux Client Einrichtung
 
-    Trigger: Neu -> Täglich -> Wiederholen alle 6 Stunden.
+**Voraussetzungen installieren:**
+`sudo pacman -S jq iptables` (Bei Debian/Ubuntu entsprechend `sudo apt install jq iptables`).
 
-    Aktion: Programm starten -> powershell.exe. Argumente: -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\DeinNutzer\Documents\Update-CS2Firewall.ps1" (Pfad anpassen!)
+1. **Skript erstellen:** 
+Lege die Datei `/usr/local/bin/update-cs2firewall.sh` an. Passe die Variablen an.
 
-Teil 3: Linux Client Einrichtung
-
-Voraussetzungen installieren:
-sudo pacman -S jq iptables (Bei Debian/Ubuntu entsprechend sudo apt install jq iptables).
-
-    Skript erstellen:
-    Lege die Datei /usr/local/bin/update-cs2firewall.sh an. Passe die Variablen an.
-
-Bash
-
+```bash
 #!/bin/bash
 
 # HIER ANPASSEN: IP/Domain und Port des Docker-Hosts eintragen.
-URL_BLOCKLIST="http://192.168.178.123:8115/blocklist.txt" 
-URL_SUMMARY="http://192.168.178.123:8115/summary.json" 
+URL_BLOCKLIST="[http://192.168.178.123:8115/blocklist.txt](http://192.168.178.123:8115/blocklist.txt)" 
+URL_SUMMARY="[http://192.168.178.123:8115/summary.json](http://192.168.178.123:8115/summary.json)" 
 
 # HIER ANPASSEN: Gewuenschtes Verzeichnis fuer die Log-Dateien.
 LOG_DIR="/var/log/cs2_firewall" 
@@ -620,17 +636,16 @@ write_log "--------------------------------------------------"
 
 # Log-Dateien rotieren (maximal 5 behalten)
 ls -t "$LOG_DIR"/cs2_firewall_log_*.log 2>/dev/null | tail -n +6 | xargs -r rm -f
+```
 
 Skript ausführbar machen:
-Bash
-
+```bash
 sudo chmod +x /usr/local/bin/update-cs2firewall.sh
+```
 
-    Systemd Automatisierung einrichten:
-    Erstelle die Service-Datei /etc/systemd/system/cs2-blocker.service:
-
-Ini, TOML
-
+2. **Systemd Automatisierung einrichten:**
+Erstelle die Service-Datei `/etc/systemd/system/cs2-blocker.service`:
+```ini
 [Unit]
 Description=Update CS2 Firewall Rules
 After=network.target
@@ -639,10 +654,10 @@ After=network.target
 Type=oneshot
 # HIER ANPASSEN: Pfad zum ausfuehrbaren Bash-Skript
 ExecStart=/usr/local/bin/update-cs2firewall.sh
+```
 
-Erstelle die Timer-Datei /etc/systemd/system/cs2-blocker.timer:
-Ini, TOML
-
+Erstelle die Timer-Datei `/etc/systemd/system/cs2-blocker.timer`:
+```ini
 [Unit]
 Description=Run CS2 Firewall Update every 6 hours
 
@@ -652,15 +667,18 @@ OnUnitActiveSec=6h
 
 [Install]
 WantedBy=timers.target
+```
 
 Aktivieren und starten:
-Bash
-
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now cs2-blocker.timer
+```
 
-Plaintext
+<details>
+<summary><b>Server-Kürzel Legende (Ausklappen)</b></summary>
 
+```text
 ams = Amsterdam (Niederlande)
 atl = Atlanta (USA)
 bom2 = Mumbai (Indien)
@@ -702,3 +720,5 @@ tgdu = Guangzhou - Unicom (China)
 tyo = Tokio (Japan)
 vie = Wien (Österreich)
 waw = Warschau (Polen)
+```
+</details>
