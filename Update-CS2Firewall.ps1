@@ -1,9 +1,9 @@
-# HIER ANPASSEN: IP/Domain und Port des Docker-Hosts eintragen.
-$UrlBlocklist = "http://192.168.178.123:8115/blocklist.txt" 
-$UrlSummary = "http://192.168.178.123:8115/summary.json" 
+# ADJUST HERE: IP/Domain and Port of your Docker Host
+$UrlBlocklist = "http://YOUR_DOCKER_IP:8115/blocklist.txt" 
+$UrlSummary = "http://YOUR_DOCKER_IP:8115/summary.json" 
 
-# HIER ANPASSEN: Gewuenschter Pfad fuer die Log-Dateien. Ordner muss existieren.
-$LogDir = "C:\Users\DeinNutzer\Documents" 
+# ADJUST HERE: Directory for log files (must exist)
+$LogDir = "C:\Users\YourUser\Documents" 
 
 $RuleName = "CS2_Server_Blocker"
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -16,41 +16,41 @@ Function Write-Log {
 }
 
 try {
-    Write-Log "Starte Aktualisierung der CS2 Firewall-Regeln..."
+    Write-Log "Starting CS2 firewall rules update..."
     $BlockList = Invoke-RestMethod -Uri $UrlBlocklist
     $Ips = $BlockList -split "`n" | Where-Object { $_.Trim() -ne "" }
     
     try {
         $Summary = Invoke-RestMethod -Uri $UrlSummary
-        Write-Log "Erlaubte Server-Regionen: $($Summary.allowed -join ', ')"
+        Write-Log "Allowed regions: $($Summary.allowed -join ', ')"
         foreach ($Region in $Summary.blocked.PSObject.Properties) {
-            Write-Log "Blockiere Region: $($Region.Name) ($($Region.Value) IPs)"
+            Write-Log "Blocking region: $($Region.Name) ($($Region.Value) IPs)"
         }
     } catch {
-        Write-Log "Konnte Server-Zusammenfassung nicht abrufen."
+        Write-Log "Could not fetch server summary."
     }
     
     if ($Ips.Count -gt 0) {
-        Write-Log "Loesche alte Firewall-Regel '$RuleName' (falls vorhanden)..."
+        Write-Log "Deleting old firewall rule '$RuleName' (if exists)..."
         netsh advfirewall firewall delete rule name=$RuleName | Out-Null
         
-        Write-Log "Erstelle neue Firewall-Regeln fuer $($Ips.Count) IPs..."
+        Write-Log "Creating new firewall rules for $($Ips.Count) IPs..."
         $ChunkSize = 150
         for ($i = 0; $i -lt $Ips.Count; $i += $ChunkSize) {
             $EndIndex = [math]::Min($i + $ChunkSize - 1, $Ips.Count - 1)
             $Chunk = $Ips[$i..$EndIndex] -join ","
             netsh advfirewall firewall add rule name=$RuleName dir=out action=block remoteip=$Chunk | Out-Null
         }
-        Write-Log "Vorgang erfolgreich abgeschlossen. $($Ips.Count) IPs verarbeitet."
+        Write-Log "Process completed. $($Ips.Count) IPs processed."
     } else {
-        Write-Log "Warnung: Keine IPs vom Container empfangen."
+        Write-Log "Warning: No IPs received from container."
     }
 } catch {
-    Write-Log "Fehler beim Abrufen der IP-Liste vom Docker-Container: $($_.Exception.Message)"
+    Write-Log "Error fetching IP list from Docker container: $($_.Exception.Message)"
 }
 Write-Log "--------------------------------------------------"
 
-# Log-Dateien rotieren (maximal 5 behalten)
+# Rotate log files (keep max 5)
 $LogFiles = Get-ChildItem -Path $LogDir -Filter "CS2_Firewall_Update_*.log" | Sort-Object CreationTime -Descending
 if ($LogFiles.Count -gt 5) {
     $FilesToDelete = $LogFiles | Select-Object -Skip 5

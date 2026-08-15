@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# HIER ANPASSEN: IP/Domain und Port des Docker-Hosts eintragen.
-URL_BLOCKLIST="http://192.168.178.123:8115/blocklist.txt" 
-URL_SUMMARY="http://192.168.178.123:8115/summary.json" 
+# ADJUST HERE: IP/Domain and Port of your Docker Host
+URL_BLOCKLIST="http://YOUR_DOCKER_IP:8115/blocklist.txt" 
+URL_SUMMARY="http://YOUR_DOCKER_IP:8115/summary.json" 
 
-# HIER ANPASSEN: Gewuenschtes Verzeichnis fuer die Log-Dateien.
+# ADJUST HERE: Directory for log files
 LOG_DIR="/var/log/cs2_firewall" 
 
 CHAIN_NAME="CS2_BLOCK"
@@ -12,7 +12,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="$LOG_DIR/cs2_firewall_log_$TIMESTAMP.log"
 
 if [ "$EUID" -ne 0 ]; then
-  echo "Fehler: Das Skript muss mit Root-Rechten ausgefuehrt werden."
+  echo "Error: Please run as root."
   exit 1
 fi
 
@@ -24,27 +24,27 @@ write_log() {
     echo "[$LOG_TIME] $MESSAGE" >> "$LOG_FILE"
 }
 
-write_log "Starte Aktualisierung der CS2 Firewall-Regeln..."
+write_log "Starting CS2 firewall rules update..."
 
 IPS=$(curl -s "$URL_BLOCKLIST")
 if [ -z "$IPS" ]; then
-    write_log "Fehler beim Abrufen der IP-Liste vom Docker-Container."
+    write_log "Error fetching IP list from Docker container."
     exit 1
 fi
 
 SUMMARY=$(curl -s "$URL_SUMMARY")
 if [ -n "$SUMMARY" ] && command -v jq >/dev/null 2>&1; then
     ALLOWED=$(echo "$SUMMARY" | jq -r '.allowed | join(", ")')
-    write_log "Erlaubte Server-Regionen: $ALLOWED"
+    write_log "Allowed regions: $ALLOWED"
     
-    echo "$SUMMARY" | jq -r '.blocked | to_entries | .[] | "Blockiere Region: \(.key) (\(.value) IPs)"' | while read -r line; do
+    echo "$SUMMARY" | jq -r '.blocked | to_entries | .[] | "Blocking region: \(.key) (\(.value) IPs)"' | while read -r line; do
         write_log "$line"
     done
 else
-    write_log "Konnte Server-Zusammenfassung nicht abrufen oder 'jq' ist nicht installiert."
+    write_log "Could not fetch server summary or 'jq' is not installed."
 fi
 
-write_log "Loesche alte iptables-Regeln '$CHAIN_NAME' (falls vorhanden)..."
+write_log "Deleting old iptables rules '$CHAIN_NAME' (if exists)..."
 iptables -D OUTPUT -j $CHAIN_NAME 2>/dev/null
 iptables -F $CHAIN_NAME 2>/dev/null
 iptables -X $CHAIN_NAME 2>/dev/null
@@ -60,12 +60,12 @@ if [ -n "$IPS" ]; then
             ((IP_COUNT++))
         fi
     done
-    write_log "Vorgang erfolgreich abgeschlossen. $IP_COUNT IPs verarbeitet."
+    write_log "Process completed. $IP_COUNT IPs processed."
 else
-    write_log "Warnung: Keine IPs vom Container empfangen."
+    write_log "Warning: No IPs received from container."
 fi
 
 write_log "--------------------------------------------------"
 
-# Log-Dateien rotieren (maximal 5 behalten)
+# Rotate log files (keep max 5)
 ls -t "$LOG_DIR"/cs2_firewall_log_*.log 2>/dev/null | tail -n +6 | xargs -r rm -f
