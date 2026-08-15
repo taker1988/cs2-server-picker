@@ -10,7 +10,7 @@ Automated setup to enforce Counter-Strike 2 (CS2) matchmaking on specific server
 
 **Background:** When starting a match search, the game pings all available servers to find the "best" one. If only one player (who runs this script) blocks all other regions, the entire lobby will be routed to the remaining allowed server.
 
-**Important Notice:** The scripts use `192.168.178.123` and Port `8115` as placeholders. **Adjust the IP and Port in all scripts** to match your actual Docker host environment.
+**Important Notice:** The scripts use a placeholder for the IP and Port `8115`. **Adjust the IP and Port in all scripts** to match your actual Docker host environment.
 
 ### Architecture
 
@@ -57,8 +57,8 @@ services:
 
 ```powershell
 # ADJUST HERE: IP/Domain and Port of your Docker Host
-$UrlBlocklist = "[http://192.168.178.123:8115/blocklist.txt](http://192.168.178.123:8115/blocklist.txt)" 
-$UrlSummary = "[http://192.168.178.123:8115/summary.json](http://192.168.178.123:8115/summary.json)" 
+$UrlBlocklist = "http://YOUR_DOCKER_IP:8115/blocklist.txt" 
+$UrlSummary = "http://YOUR_DOCKER_IP:8115/summary.json" 
 
 # ADJUST HERE: Directory for log files (must exist)
 $LogDir = "C:\Users\YourUser\Documents" 
@@ -116,3 +116,91 @@ if ($LogFiles.Count -gt 5) {
         Remove-Item -Path $File.FullName -Force
     }
 }
+```
+
+**Task Scheduler Automation:**
+* Open Task Scheduler -> *Create Task...*
+* **General:** Name it, check **Run with highest privileges**.
+* **Triggers:** New -> Daily -> Repeat task every 6 hours.
+* **Actions:** Start a program -> `powershell.exe`. Arguments: `-ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\YourUser\Documents\Update-CS2Firewall.ps1"` **(Adjust path!)**
+
+---
+
+### Part 3: Linux Client Setup
+
+**Prerequisites:** Install `jq` and `iptables`. (e.g., `sudo pacman -S jq iptables` or `sudo apt install jq iptables`).
+
+1. Save the following script as `/usr/local/bin/update-cs2firewall.sh`. Adjust the `URL` variables and `$LOG_DIR`.
+
+```bash
+#!/bin/bash
+
+# ADJUST HERE: IP/Domain and Port of your Docker Host
+URL_BLOCKLIST="http://YOUR_DOCKER_IP:8115/blocklist.txt" 
+URL_SUMMARY="http://YOUR_DOCKER_IP:8115/summary.json" 
+
+# ADJUST HERE: Directory for log files
+LOG_DIR="/var/log/cs2_firewall" 
+
+CHAIN_NAME="CS2_BLOCK"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_FILE="$LOG_DIR/cs2_firewall_log_$TIMESTAMP.log"
+
+if [ "$EUID" -ne 0 ]; then
+  echo "Error: Please run as root."
+  exit 1
+fi
+
+mkdir -p "$LOG_DIR"
+
+write_log() {
+    local MESSAGE="$1"
+    local LOG_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+    echo "[$LOG_TIME] $MESSAGE" >> "$LOG_FILE"
+}
+
+write_log "Starting CS2 firewall rules update..."
+
+IPS=$(curl -s "$URL_BLOCKLIST")
+if [ -z "$IPS" ]; then
+    write_log "Error fetching IP list from Docker container."
+    exit 1
+fi
+
+SUMMARY=$(curl -s "$URL_SUMMARY")
+if [ -n "$SUMMARY" ] && command -v jq >/dev/null 2>&1; then
+    ALLOWED=$(echo "$SUMMARY" | jq -r '.allowed | join(", ")')
+    write_log "Allowed regions: $ALLOWED"
+    
+    echo "$SUMMARY" | jq -r '.blocked | to_entries | .[] | "Blocking region: \(.key) (\(.value) IPs)"' | while read -r line; do
+        write_log "$line"
+    done
+else
+    write_log "Could not fetch server summary or 'jq' is not installed."
+fi
+
+write_log "Deleting old iptables rules '$CHAIN_NAME' (if exists)..."
+iptables -D OUTPUT -j $CHAIN_NAME 2>/dev/null
+iptables -F $CHAIN_NAME 2>/dev/null
+iptables -X $CHAIN_NAME 2>/dev/null
+
+IP_COUNT=0
+if [ -n "$IPS" ]; then
+    iptables -N $CHAIN_NAME
+    iptables -A OUTPUT -j $CHAIN_NAME
+    
+    for ip in $IPS; do
+        if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            iptables -A $CHAIN_NAME -d$ip -j DROP
+            ((IP_COUNT++))
+        fi
+    done
+    write_log "Process completed. $IP_COUNT IPs processed."
+else
+    write_log "Warning: No IPs received from container."
+fi
+
+write_log "--------------------------------------------------"
+
+# Rotate log files (keep max 5)
+ls -t "$LOG_DIR"/cs2_firewall_log_*.log 2>/dev/null | tail -n +6 | xargs -r rm -f
