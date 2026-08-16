@@ -85,19 +85,20 @@ $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $LogFile = "$LogDir\CS2_Firewall_Update_$Timestamp.log"
 
 Function Write-Log {
-    param ([string]$Message)$LogTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -Path $LogFile -Value "[$LogTime]$Message"
+    param ([string]$Message)
+    $LogTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -Path $LogFile -Value "[$LogTime] $Message"
 }
 
 try {
     Write-Log "Starting CS2 firewall rules update..."
-    $BlockList = Invoke-RestMethod -Uri$UrlBlocklist
-    $Ips =$BlockList -split "`n" | Where-Object { $_.Trim() -ne "" }
+    $BlockList = Invoke-RestMethod -Uri $UrlBlocklist
+    $Ips = $BlockList -split "`n" | Where-Object { $_.Trim() -ne "" }
     
     try {
-        $Summary = Invoke-RestMethod -Uri $UrlSummary
+        $Summary = Invoke-RestMethod -Uri$UrlSummary
         Write-Log "Allowed regions: $($Summary.allowed -join ', ')"
-        foreach ($Region in $Summary.blocked.PSObject.Properties) {
+        foreach ($Region in$Summary.blocked.PSObject.Properties) {
             Write-Log "Blocking region: $($Region.Name) ($($Region.Value) IPs)"
         }
     } catch {
@@ -110,9 +111,9 @@ try {
         
         Write-Log "Creating new firewall rules for $($Ips.Count) IPs..."
         $ChunkSize = 150
-        for ($i = 0; $i -lt $Ips.Count; $i += $ChunkSize) {
-            $EndIndex = [math]::Min($i + $ChunkSize - 1, $Ips.Count - 1)
-            $Chunk = $Ips[$i..$EndIndex] -join ","
+        for ($i = 0; $i -lt$Ips.Count; $i +=$ChunkSize) {
+            $EndIndex = [math]::Min($i + $ChunkSize - 1,$Ips.Count - 1)
+            $Chunk =$Ips[$i..$EndIndex] -join ","
             netsh advfirewall firewall add rule name=$RuleName dir=out action=block remoteip=$Chunk | Out-Null
         }
         Write-Log "Process completed. $($Ips.Count) IPs processed."
@@ -124,10 +125,10 @@ try {
 }
 Write-Log "--------------------------------------------------"
 
-$LogFiles = Get-ChildItem -Path $LogDir -Filter "CS2_Firewall_Update_*.log" | Sort-Object CreationTime -Descending
+$LogFiles = Get-ChildItem -Path$LogDir -Filter "CS2_Firewall_Update_*.log" | Sort-Object CreationTime -Descending
 if ($LogFiles.Count -gt 5) {
-    $FilesToDelete = $LogFiles | Select-Object -Skip 5
-    foreach ($File in $FilesToDelete) {
+    $FilesToDelete =$LogFiles | Select-Object -Skip 5
+    foreach ($File in$FilesToDelete) {
         Remove-Item -Path $File.FullName -Force
     }
 }
@@ -195,7 +196,7 @@ if [ -n "$IPS" ]; then
     
     for ip in $IPS; do
         if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            iptables -A $CHAIN_NAME -d $ip -j DROP
+            iptables -A $CHAIN_NAME -d$ip -j DROP
             ((IP_COUNT++))
         fi
     done
@@ -216,7 +217,7 @@ ls -t "$LOG_DIR"/cs2_firewall_log_*.log 2>/dev/null | tail -n +6 | xargs -r rm -
 
 Ein automatisiertes Setup, um das Matchmaking in Counter-Strike 2 (CS2) auf bestimmte Server-Regionen (z.B. nur Frankfurt) zu beschränken, indem unerwünschte IP-Bereiche über die lokale Firewall blockiert werden. Dies funktioniert sowohl für Solo-Spieler als auch für komplette Lobbys.
 
-**Hintergrund:** Bei der Matchsuche pingt das Spiel alle verfügbaren Server an, um den "besten" zu finden. Wenn auch nur ein Spieler der Lobby (der dieses Tool nutzt) alle anderen Regionen blockiert, wird die gesamte Lobby auf den verblebeiten, erlaubten Server geleitet.
+**Hintergrund:** Bei der Matchsuche pingt das Spiel alle verfügbaren Server an, um den "besten" zu finden. Wenn auch nur ein Spieler der Lobby (der dieses Tool nutzt) alle anderen Regionen blockiert, wird die gesamte Lobby auf den verbleibenden, erlaubten Server geleitet.
 
 ### Architektur
 
@@ -277,12 +278,140 @@ Da diese Anwendung lokale Firewall-Regeln ändert, wird sie von Windows Defender
 Alternativ können die reinen Code-Skripte ohne GUI genutzt werden.
 
 **Windows Setup (PowerShell):**
-1. Kopiere den PowerShell-Code (siehe englische Version oben) und speichere ihn als `Update-CS2Firewall.ps1`.
+1. Kopiere den PowerShell-Code und speichere ihn als `Update-CS2Firewall.ps1`.
 2. Passe die IP-Adressen und Pfade im Skript an.
 3. Richte über die Windows Aufgabenplanung einen Task ein, der das Skript mit höchsten Privilegien alle 6 Stunden über `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Pfad\Update-CS2Firewall.ps1"` ausführt.
 
+```powershell
+$UrlBlocklist = "http://DEINE_DOCKER_IP:8115/blocklist.txt" 
+$UrlSummary = "http://DEINE_DOCKER_IP:8115/summary.json" 
+$LogDir = "C:\Users\DeinUser\Documents" 
+
+$RuleName = "CS2_Server_Blocker"
+$Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$LogFile = "$LogDir\CS2_Firewall_Update_$Timestamp.log"
+
+Function Write-Log {
+    param ([string]$Message)$LogTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -Path $LogFile -Value "[$LogTime]$Message"
+}
+
+try {
+    Write-Log "Starte Aktualisierung der CS2 Firewall-Regeln..."
+    $BlockList = Invoke-RestMethod -Uri$UrlBlocklist
+    $Ips =$BlockList -split "`n" | Where-Object { $_.Trim() -ne "" }
+    
+    try {
+        $Summary = Invoke-RestMethod -Uri $UrlSummary
+        Write-Log "Erlaubte Regionen: $($Summary.allowed -join ', ')"
+        foreach ($Region in $Summary.blocked.PSObject.Properties) {
+            Write-Log "Blockiere Region: $($Region.Name) ($($Region.Value) IPs)"
+        }
+    } catch {
+        Write-Log "Server-Zusammenfassung konnte nicht abgerufen werden."
+    }
+    
+    if ($Ips.Count -gt 0) {
+        Write-Log "Lösche alte Firewall-Regel '$RuleName' (falls vorhanden)..."
+        netsh advfirewall firewall delete rule name=$RuleName | Out-Null
+        
+        Write-Log "Erstelle neue Firewall-Regeln für $($Ips.Count) IPs..."
+        $ChunkSize = 150
+        for ($i = 0; $i -lt $Ips.Count; $i += $ChunkSize) {
+            $EndIndex = [math]::Min($i + $ChunkSize - 1, $Ips.Count - 1)
+            $Chunk = $Ips[$i..$EndIndex] -join ","
+            netsh advfirewall firewall add rule name=$RuleName dir=out action=block remoteip=$Chunk | Out-Null
+        }
+        Write-Log "Vorgang abgeschlossen. $($Ips.Count) IPs verarbeitet."
+    } else {
+        Write-Log "Warnung: Keine IPs vom Container empfangen."
+    }
+} catch {
+    Write-Log "Fehler beim Abrufen der IP-Liste vom Docker-Container: $($_.Exception.Message)"
+}
+Write-Log "--------------------------------------------------"
+
+$LogFiles = Get-ChildItem -Path $LogDir -Filter "CS2_Firewall_Update_*.log" | Sort-Object CreationTime -Descending
+if ($LogFiles.Count -gt 5) {
+    $FilesToDelete = $LogFiles | Select-Object -Skip 5
+    foreach ($File in $FilesToDelete) {
+        Remove-Item -Path $File.FullName -Force
+    }
+}
+```
+
 **Linux Setup (Bash):**
-1. Installiere `jq` und `iptables`.
-2. Kopiere den Bash-Code (siehe englische Version oben) und speichere ihn als `/usr/local/bin/update-cs2firewall.sh`.
+1. Installiere `jq` und `iptables` (`sudo pacman -S jq iptables` oder `sudo apt install jq iptables`).
+2. Kopiere den Bash-Code und speichere ihn als `/usr/local/bin/update-cs2firewall.sh`.
 3. Passe die IP-Adressen im Skript an.
 4. Richte über `sudo crontab -e` einen Cronjob ein: `0 */6 * * * /usr/local/bin/update-cs2firewall.sh`.
+
+```bash
+#!/bin/bash
+
+URL_BLOCKLIST="http://DEINE_DOCKER_IP:8115/blocklist.txt" 
+URL_SUMMARY="http://DEINE_DOCKER_IP:8115/summary.json" 
+LOG_DIR="/var/log/cs2_firewall" 
+
+CHAIN_NAME="CS2_BLOCK"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_FILE="$LOG_DIR/cs2_firewall_log_$TIMESTAMP.log"
+
+if [ "$EUID" -ne 0 ]; then
+  echo "Fehler: Bitte als Root ausführen."
+  exit 1
+fi
+
+mkdir -p "$LOG_DIR"
+
+write_log() {
+    local MESSAGE="$1"
+    local LOG_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+    echo "[$LOG_TIME] $MESSAGE" >> "$LOG_FILE"
+}
+
+write_log "Starte Aktualisierung der CS2 Firewall-Regeln..."
+
+IPS=$(curl -s "$URL_BLOCKLIST")
+if [ -z "$IPS" ]; then
+    write_log "Fehler beim Abrufen der IP-Liste vom Docker-Container."
+    exit 1
+fi
+
+SUMMARY=$(curl -s "$URL_SUMMARY")
+if [ -n "$SUMMARY" ] && command -v jq >/dev/null 2>&1; then
+    ALLOWED=$(echo "$SUMMARY" | jq -r '.allowed | join(", ")')
+    write_log "Erlaubte Regionen: $ALLOWED"
+    
+    echo "$SUMMARY" | jq -r '.blocked | to_entries | .[] | "Blockiere Region: \(.key) (\(.value) IPs)"' | while read -r line; do
+        write_log "$line"
+    done
+else
+    write_log "Server-Zusammenfassung konnte nicht abgerufen werden oder 'jq' ist nicht installiert."
+fi
+
+write_log "Lösche alte iptables-Regeln '$CHAIN_NAME' (falls vorhanden)..."
+iptables -D OUTPUT -j $CHAIN_NAME 2>/dev/null
+iptables -F $CHAIN_NAME 2>/dev/null
+iptables -X $CHAIN_NAME 2>/dev/null
+
+IP_COUNT=0
+if [ -n "$IPS" ]; then
+    iptables -N $CHAIN_NAME
+    iptables -A OUTPUT -j $CHAIN_NAME
+    
+    for ip in $IPS; do
+        if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            iptables -A $CHAIN_NAME -d $ip -j DROP
+            ((IP_COUNT++))
+        fi
+    done
+    write_log "Vorgang abgeschlossen. $IP_COUNT IPs verarbeitet."
+else
+    write_log "Warnung: Keine IPs vom Container empfangen."
+fi
+
+write_log "--------------------------------------------------"
+
+ls -t "$LOG_DIR"/cs2_firewall_log_*.log 2>/dev/null | tail -n +6 | xargs -r rm -f
+```
