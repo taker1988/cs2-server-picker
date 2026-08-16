@@ -10,20 +10,16 @@ Automated setup to enforce Counter-Strike 2 (CS2) matchmaking on specific server
 
 **Background:** When starting a match search, the game pings all available servers to find the "best" one. If only one player (who runs this script) blocks all other regions, the entire lobby will be routed to the remaining allowed server.
 
-**Important Notice:** The scripts use a placeholder for the IP and Port `8115`. **Adjust the IP and Port in all scripts** to match your actual Docker host environment.
-
 ### Architecture
 
-1. **Docker Container (Backend):** Queries the official Valve API (`GetSDRConfig`) hourly for Steam Datagram Relay (SDR) servers. Filters them based on a Whitelist (`ALLOW_REGIONS`) or Blacklist (`BLOCK_REGIONS`) and serves a `blocklist.txt` via a lightweight HTTP server. The backend runs as a pre-built Docker image.
-2. **Windows/Linux Client:** Runs on a schedule (every 6 hours), downloads the list, and updates the local firewall (`netsh` for Windows, `iptables` for Linux) to block the IPs. Keeps a rotating log of the last 5 executions.
+1. **Docker Container (Backend):** Queries the official Valve API (`GetSDRConfig`) hourly for Steam Datagram Relay (SDR) servers. Filters them based on a Whitelist (`ALLOW_REGIONS`) or Blacklist (`BLOCK_REGIONS`) and serves a `blocklist.txt` and `summary.json` via a lightweight HTTP server. The backend runs as a pre-built Docker image.
+2. **Client Options:** You can either use the graphical standalone client (GUI) or the manual scripts (PowerShell/Bash) to fetch the blocklist and apply the firewall rules.
 
 ---
 
 ### Part 1: Docker Backend Setup
 
-The container runs isolated and generates `blocklist.txt` and `summary.json`. Since the image is hosted on Docker Hub, you only need to deploy the `docker-compose.yml` stack.
-
-Deploy the following stack (e.g., via Portainer). Adjust paths, variables, and ports to fit your host environment.
+The container runs isolated and generates the necessary IP lists. Deploy the following stack (e.g., via Portainer). Adjust paths, variables, and ports to fit your host environment.
 
 ```yaml
 services:
@@ -50,17 +46,38 @@ services:
 
 ---
 
-### Part 2: Windows Client Setup
+### Part 2: Client Setup (Choose Option A or B)
 
+#### Option A: GUI Client (Windows & Linux)
+
+The CS2 Server Picker Client provides an easy-to-use graphical interface.
+
+**Anti-Virus / Windows Defender Note:**
+Because this application modifies local firewall rules and is packaged as a standalone executable, Windows Defender or third-party antivirus software may flag it as a false positive. **You must add the `CS2_Server_Picker_Windows.exe` to your antivirus exclusions/exceptions list for it to function correctly.**
+
+**Usage:**
+1. Download the latest release for your OS from the [Releases](https://github.com/taker1988/cs2-server-picker/releases) page.
+2. **Windows:** Run `CS2_Server_Picker_Windows.exe` with a double click (it will ask for Administrator privileges).
+3. **Linux:** Open a terminal in the downloaded directory and run: `sudo ./CS2_Server_Picker_Linux`
+4. Enter the IP and Port of your Docker backend (e.g., `192.168.178.123:8115`) and click **Apply Firewall Rules**.
+5. **Automation:** Select a background timer interval in the GUI (e.g., `6h`) and click **Create Timer** to automate the process.
+
+---
+
+#### Option B: Manual Scripts (PowerShell / Bash)
+
+If you prefer not to use the GUI, you can use the manual scripts.
+
+**Windows Setup (PowerShell):**
 1. Save the following code as `Update-CS2Firewall.ps1`.
 2. Adjust `$UrlBlocklist`, `$UrlSummary`, and `$LogDir`.
+3. Open Task Scheduler -> *Create Task...* -> Name it, check **Run with highest privileges**.
+4. Set a daily trigger to repeat every 6 hours.
+5. Action: Start a program -> `powershell.exe`. Arguments: `-ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Path\To\Update-CS2Firewall.ps1"`
 
 ```powershell
-# ADJUST HERE: IP/Domain and Port of your Docker Host
 $UrlBlocklist = "http://YOUR_DOCKER_IP:8115/blocklist.txt" 
 $UrlSummary = "http://YOUR_DOCKER_IP:8115/summary.json" 
-
-# ADJUST HERE: Directory for log files (must exist)
 $LogDir = "C:\Users\YourUser\Documents" 
 
 $RuleName = "CS2_Server_Blocker"
@@ -68,20 +85,19 @@ $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $LogFile = "$LogDir\CS2_Firewall_Update_$Timestamp.log"
 
 Function Write-Log {
-    param ([string]$Message)
-    $LogTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -Path $LogFile -Value "[$LogTime] $Message"
+    param ([string]$Message)$LogTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -Path $LogFile -Value "[$LogTime]$Message"
 }
 
 try {
     Write-Log "Starting CS2 firewall rules update..."
-    $BlockList = Invoke-RestMethod -Uri $UrlBlocklist
-    $Ips = $BlockList -split "`n" | Where-Object { $_.Trim() -ne "" }
+    $BlockList = Invoke-RestMethod -Uri$UrlBlocklist
+    $Ips =$BlockList -split "`n" | Where-Object { $_.Trim() -ne "" }
     
     try {
-        $Summary = Invoke-RestMethod -Uri$UrlSummary
+        $Summary = Invoke-RestMethod -Uri $UrlSummary
         Write-Log "Allowed regions: $($Summary.allowed -join ', ')"
-        foreach ($Region in$Summary.blocked.PSObject.Properties) {
+        foreach ($Region in $Summary.blocked.PSObject.Properties) {
             Write-Log "Blocking region: $($Region.Name) ($($Region.Value) IPs)"
         }
     } catch {
@@ -94,9 +110,9 @@ try {
         
         Write-Log "Creating new firewall rules for $($Ips.Count) IPs..."
         $ChunkSize = 150
-        for ($i = 0; $i -lt$Ips.Count; $i +=$ChunkSize) {
-            $EndIndex = [math]::Min($i + $ChunkSize - 1,$Ips.Count - 1)
-            $Chunk =$Ips[$i..$EndIndex] -join ","
+        for ($i = 0; $i -lt $Ips.Count; $i += $ChunkSize) {
+            $EndIndex = [math]::Min($i + $ChunkSize - 1, $Ips.Count - 1)
+            $Chunk = $Ips[$i..$EndIndex] -join ","
             netsh advfirewall firewall add rule name=$RuleName dir=out action=block remoteip=$Chunk | Out-Null
         }
         Write-Log "Process completed. $($Ips.Count) IPs processed."
@@ -108,38 +124,26 @@ try {
 }
 Write-Log "--------------------------------------------------"
 
-# Rotate log files (keep max 5)
-$LogFiles = Get-ChildItem -Path$LogDir -Filter "CS2_Firewall_Update_*.log" | Sort-Object CreationTime -Descending
+$LogFiles = Get-ChildItem -Path $LogDir -Filter "CS2_Firewall_Update_*.log" | Sort-Object CreationTime -Descending
 if ($LogFiles.Count -gt 5) {
-    $FilesToDelete =$LogFiles | Select-Object -Skip 5
-    foreach ($File in$FilesToDelete) {
+    $FilesToDelete = $LogFiles | Select-Object -Skip 5
+    foreach ($File in $FilesToDelete) {
         Remove-Item -Path $File.FullName -Force
     }
 }
 ```
 
-**Task Scheduler Automation:**
-* Open Task Scheduler -> *Create Task...*
-* **General:** Name it, check **Run with highest privileges**.
-* **Triggers:** New -> Daily -> Repeat task every 6 hours.
-* **Actions:** Start a program -> `powershell.exe`. Arguments: `-ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\YourUser\Documents\Update-CS2Firewall.ps1"` **(Adjust path!)**
-
----
-
-### Part 3: Linux Client Setup
-
-**Prerequisites:** Install `jq` and `iptables`. (e.g., `sudo pacman -S jq iptables` or `sudo apt install jq iptables`).
-
-1. Save the following script as `/usr/local/bin/update-cs2firewall.sh`. Adjust the `URL` variables and `$LOG_DIR`.
+**Linux Setup (Bash):**
+1. Install `jq` and `iptables` (`sudo pacman -S jq iptables` or `sudo apt install jq iptables`).
+2. Save the following script as `/usr/local/bin/update-cs2firewall.sh`.
+3. Adjust the `URL` variables and `$LOG_DIR`.
+4. Run via cronjob (`sudo crontab -e`): `0 */6 * * * /usr/local/bin/update-cs2firewall.sh`
 
 ```bash
 #!/bin/bash
 
-# ADJUST HERE: IP/Domain and Port of your Docker Host
 URL_BLOCKLIST="http://YOUR_DOCKER_IP:8115/blocklist.txt" 
 URL_SUMMARY="http://YOUR_DOCKER_IP:8115/summary.json" 
-
-# ADJUST HERE: Directory for log files
 LOG_DIR="/var/log/cs2_firewall" 
 
 CHAIN_NAME="CS2_BLOCK"
@@ -191,7 +195,7 @@ if [ -n "$IPS" ]; then
     
     for ip in $IPS; do
         if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            iptables -A $CHAIN_NAME -d$ip -j DROP
+            iptables -A $CHAIN_NAME -d $ip -j DROP
             ((IP_COUNT++))
         fi
     done
@@ -202,5 +206,83 @@ fi
 
 write_log "--------------------------------------------------"
 
-# Rotate log files (keep max 5)
 ls -t "$LOG_DIR"/cs2_firewall_log_*.log 2>/dev/null | tail -n +6 | xargs -r rm -f
+```
+
+---
+---
+
+## Deutsche Version
+
+Ein automatisiertes Setup, um das Matchmaking in Counter-Strike 2 (CS2) auf bestimmte Server-Regionen (z.B. nur Frankfurt) zu beschränken, indem unerwünschte IP-Bereiche über die lokale Firewall blockiert werden. Dies funktioniert sowohl für Solo-Spieler als auch für komplette Lobbys.
+
+**Hintergrund:** Bei der Matchsuche pingt das Spiel alle verfügbaren Server an, um den "besten" zu finden. Wenn auch nur ein Spieler der Lobby (der dieses Tool nutzt) alle anderen Regionen blockiert, wird die gesamte Lobby auf den verblebeiten, erlaubten Server geleitet.
+
+### Architektur
+
+1. **Docker Container (Backend):** Fragt stündlich die offizielle Valve-API (`GetSDRConfig`) nach SDR-Servern ab. Filtert diese basierend auf einer Whitelist (`ALLOW_REGIONS`) oder Blacklist (`BLOCK_REGIONS`) und stellt eine `blocklist.txt` sowie eine `summary.json` bereit.
+2. **Client-Optionen:** Die Firewall-Regeln können wahlweise über den grafischen GUI-Client oder komplett manuell per Skript (PowerShell/Bash) auf dem jeweiligen PC angewendet werden.
+
+---
+
+### Teil 1: Docker Backend Setup
+
+Der Container läuft isoliert und generiert die IP-Listen. Stelle den folgenden Stack bereit (z.B. über Portainer) und passe Pfade, Variablen sowie Ports an.
+
+```yaml
+services:
+  cs2-server-picker:
+    image: taker1988/cs2-server-picker:latest
+    container_name: cs2-server-picker
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - TZ=Europe/Berlin
+      - ALLOW_REGIONS=fra # HIER ANPASSEN: Whitelist (z.B. fra). Blockiert alles andere, wenn gesetzt.
+      - BLOCK_REGIONS=ams,atl,dfw,dxb,eze,gru,gum,hkg,iad,jnb,lax,lhr,lim,mad,ord,par,scl,sea,seo,sgp,sto,syd,tyo,vie,waw,bom2,maa2,sto2,ctum,pekm,pvgm,tgdm,ctut,pekt,pvgt,tgdt,ctuu,peku,pvgu,tgdu # HIER ANPASSEN: Blacklist. Nur aktiv, wenn ALLOW_REGIONS leer ist.
+    volumes:
+      - /volume2/docker/cs2-server-picker/html:/app/html # HIER ANPASSEN: Lokaler Host-Pfad
+    ports:
+      - "8115:8000" # HIER ANPASSEN: Externer Port
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/blocklist.txt"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+```
+
+---
+
+### Teil 2: Client Setup (Wähle Option A oder B)
+
+#### Option A: GUI Client (Windows & Linux)
+
+Die grafische Oberfläche ist die empfohlene und einfachste Variante.
+
+**Hinweis zu Antiviren-Programmen / Windows Defender:**
+Da diese Anwendung lokale Firewall-Regeln ändert, wird sie von Windows Defender häufig als "False Positive" (Fehlalarm) blockiert. **Die Datei `CS2_Server_Picker_Windows.exe` muss zwingend als Ausnahme im Antiviren-Programm hinzugefügt werden.**
+
+**Nutzung:**
+1. Lade das neueste Release für dein Betriebssystem von der [Releases-Seite](https://github.com/taker1988/cs2-server-picker/releases) herunter.
+2. **Windows:** Starte die `CS2_Server_Picker_Windows.exe` per Doppelklick (Administrator-Rechte werden automatisch angefragt).
+3. **Linux:** Öffne ein Terminal im Download-Verzeichnis und starte die Datei als Root: `sudo ./CS2_Server_Picker_Linux`
+4. Gib die IP und den Port deines Backends ein (z.B. `192.168.178.123:8115`) und klicke auf **Firewall Regeln anwenden**.
+5. **Automatisierung:** Wähle ein Intervall im Dropdown-Menü und klicke auf **Timer erstellen**, um die Aktualisierung im Hintergrund einzurichten.
+
+---
+
+#### Option B: Manuelle Skripte (PowerShell / Bash)
+
+Alternativ können die reinen Code-Skripte ohne GUI genutzt werden.
+
+**Windows Setup (PowerShell):**
+1. Kopiere den PowerShell-Code (siehe englische Version oben) und speichere ihn als `Update-CS2Firewall.ps1`.
+2. Passe die IP-Adressen und Pfade im Skript an.
+3. Richte über die Windows Aufgabenplanung einen Task ein, der das Skript mit höchsten Privilegien alle 6 Stunden über `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Pfad\Update-CS2Firewall.ps1"` ausführt.
+
+**Linux Setup (Bash):**
+1. Installiere `jq` und `iptables`.
+2. Kopiere den Bash-Code (siehe englische Version oben) und speichere ihn als `/usr/local/bin/update-cs2firewall.sh`.
+3. Passe die IP-Adressen im Skript an.
+4. Richte über `sudo crontab -e` einen Cronjob ein: `0 */6 * * * /usr/local/bin/update-cs2firewall.sh`.
